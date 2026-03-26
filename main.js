@@ -164,7 +164,7 @@ function createInfoCard(label, value) {
     labelEl.textContent = label;
 
     const valueEl = document.createElement('div');
-    valueEl.className = 'font-medium';
+    valueEl.className = 'font-medium whitespace-pre-wrap break-all';
     valueEl.textContent = escapeHtml(value);
 
     card.append(labelEl, valueEl);
@@ -391,18 +391,7 @@ function createAuthorContainer(videoData) {
     return authorContainer;
 }
 
-// 创建信息容器
-function createInfoContainer(videoData) {
-    const infoContainer = document.createElement('div');
-    infoContainer.className = 'grid grid-cols-1 md:grid-cols-3 gap-4 mb-6';
-
-    // 视频标题
-    infoContainer.appendChild(createInfoCard('作品标题', videoData.title || '未知标题'));
-
-    // 发布时间
-    infoContainer.appendChild(createInfoCard('发布时间', formatDate(videoData.time) || '未知时间'));
-
-    // 作品类型
+function getContentTypeText(videoData) {
     let typeText = '未知类型';
     const type = videoData.type || (videoData.images && videoData.images.length > 0 ? 'images' : 'video');
 
@@ -415,10 +404,161 @@ function createInfoContainer(videoData) {
     } else {
         typeText = (videoData.images && videoData.images.length > 0) ? '图片集' : '视频';
     }
-    
-    infoContainer.appendChild(createInfoCard('作品类型', typeText));
+
+    return typeText;
+}
+
+function getNestedValue(source, paths) {
+    for (const path of paths) {
+        const value = path.split('.').reduce((acc, key) => {
+            if (acc === undefined || acc === null) return undefined;
+            return acc[key];
+        }, source);
+
+        if (value !== undefined && value !== null && value !== '') {
+            return value;
+        }
+    }
+
+    return '';
+}
+
+function isEmptyDisplayValue(value) {
+    return value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
+}
+
+function formatDisplayValue(value, key = '') {
+    if (isEmptyDisplayValue(value)) {
+        return '';
+    }
+
+    const normalizedKey = key.toLowerCase();
+
+    if (Array.isArray(value)) {
+        const scalarItems = value.filter(item => item !== undefined && item !== null && item !== '');
+        if (!scalarItems.length) {
+            return '';
+        }
+
+        if (scalarItems.every(item => ['string', 'number', 'boolean'].includes(typeof item))) {
+            return scalarItems.map(item => formatDisplayValue(item, key)).filter(Boolean).join('\n');
+        }
+
+        return `${scalarItems.length} 项`;
+    }
+
+    if (typeof value === 'boolean') {
+        return value ? '是' : '否';
+    }
+
+    if (typeof value === 'number') {
+        if (normalizedKey.includes('time') || normalizedKey.includes('date')) {
+            const formattedDate = formatDate(value);
+            return formattedDate || String(value);
+        }
+
+        if (/(like|comment|share|collect|favorite|digg|play|view|count)/.test(normalizedKey)) {
+            return formatNumber(value);
+        }
+
+        return String(value);
+    }
+
+    if (typeof value === 'string') {
+        const trimmedValue = value.trim();
+        if (!trimmedValue) {
+            return '';
+        }
+
+        if ((normalizedKey.includes('time') || normalizedKey.includes('date')) && /^\d{10,13}$/.test(trimmedValue)) {
+            const formattedDate = formatDate(trimmedValue);
+            return formattedDate || trimmedValue;
+        }
+
+        return trimmedValue;
+    }
+
+    if (typeof value === 'object') {
+        return JSON.stringify(value, null, 2);
+    }
+
+    return String(value);
+}
+
+function createInfoContainer(videoData) {
+    const infoContainer = document.createElement('div');
+    infoContainer.className = 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6';
+
+    const entries = [
+        { label: '作品标题', value: videoData.title || videoData.desc || videoData.text || videoData.content, keys: ['title', 'desc', 'text', 'content'] },
+        { label: '作品说明', value: videoData.desc || videoData.text || videoData.content, keys: ['desc', 'text', 'content'] },
+        { label: '作品类型', value: getContentTypeText(videoData), keys: ['type'] },
+        { label: '发布时间', value: formatDate(videoData.time || videoData.create_time || videoData.publish_time) || '', keys: ['time', 'create_time', 'publish_time'] },
+        { label: '作者名称', value: getNestedValue(videoData, ['author.name', 'author.nickname', 'author.user_name', 'author', 'nickname', 'user_name']), keys: ['author', 'nickname', 'user_name'] },
+        { label: '作者ID', value: getNestedValue(videoData, ['author.uid', 'author.id', 'uid', 'user_id', 'aweme_id']), keys: ['uid', 'user_id', 'aweme_id'] },
+        { label: '点赞数量', value: getNestedValue(videoData, ['like', 'digg_count', 'statistics.digg_count', 'stats.like_count']), keys: ['like', 'digg_count', 'statistics', 'stats'] },
+        { label: '评论数量', value: getNestedValue(videoData, ['comment', 'comment_count', 'statistics.comment_count', 'stats.comment_count']), keys: ['comment', 'comment_count', 'statistics', 'stats'] },
+        { label: '分享数量', value: getNestedValue(videoData, ['share', 'share_count', 'statistics.share_count', 'stats.share_count']), keys: ['share', 'share_count', 'statistics', 'stats'] },
+        { label: '收藏数量', value: getNestedValue(videoData, ['collect', 'collect_count', 'statistics.collect_count', 'stats.collect_count']), keys: ['collect', 'collect_count', 'statistics', 'stats'] },
+        { label: '视频时长', value: getNestedValue(videoData, ['duration', 'video_duration']), keys: ['duration', 'video_duration'] },
+        { label: '视频链接', value: cleanUrl(videoData.url), keys: ['url'] },
+        { label: '封面链接', value: cleanUrl(videoData.cover || videoData.coverUrl), keys: ['cover', 'coverUrl'] },
+        { label: '图片数量', value: Array.isArray(videoData.images) ? videoData.images.length : '', keys: ['images'] },
+        { label: '图片链接', value: Array.isArray(videoData.images) ? videoData.images.map(item => cleanUrl(item)).filter(Boolean) : '', keys: ['images'] },
+        { label: '音乐标题', value: getNestedValue(videoData, ['music.title']), keys: ['music'] },
+        { label: '音乐作者', value: getNestedValue(videoData, ['music.author']), keys: ['music'] },
+        { label: '音乐链接', value: cleanUrl(getNestedValue(videoData, ['music.url'])), keys: ['music'] },
+    ];
+
+    const handledKeys = new Set(['author', 'music', 'images', 'live_photo']);
+
+    entries.forEach(entry => {
+        const formattedValue = formatDisplayValue(entry.value, (entry.keys && entry.keys[0]) || entry.label);
+        if (!formattedValue) {
+            return;
+        }
+
+        (entry.keys || []).forEach(key => handledKeys.add(key));
+        infoContainer.appendChild(createInfoCard(entry.label, formattedValue));
+    });
+
+    Object.entries(videoData).forEach(([key, value]) => {
+        if (handledKeys.has(key)) {
+            return;
+        }
+
+        const formattedValue = formatDisplayValue(value, key);
+        if (!formattedValue) {
+            return;
+        }
+
+        infoContainer.appendChild(createInfoCard(key, formattedValue));
+    });
 
     return infoContainer;
+}
+
+function createRawDataContainer(videoData) {
+    const rawContainer = document.createElement('div');
+    rawContainer.className = 'rounded-xl border border-gray-200 bg-white/80 p-5 mt-6';
+
+    const title = document.createElement('h4');
+    title.className = 'text-base font-semibold mb-3';
+    title.textContent = '完整返回数据';
+
+    const description = document.createElement('p');
+    description.className = 'text-sm text-gray-500 mb-4';
+    description.textContent = '以下为接口返回的原始结果，便于完整查看所有字段。';
+
+    const rawContent = document.createElement('pre');
+    rawContent.className = 'max-h-[28rem] overflow-auto rounded-xl bg-gray-950 p-4 text-xs leading-6 text-gray-100 whitespace-pre-wrap break-all';
+    rawContent.textContent = JSON.stringify(videoData, null, 2);
+
+    rawContainer.appendChild(title);
+    rawContainer.appendChild(description);
+    rawContainer.appendChild(rawContent);
+
+    return rawContainer;
 }
 
 // 创建视频播放器
@@ -770,11 +910,13 @@ document.addEventListener('DOMContentLoaded', function () {
     setupFAQToggle();
     // 导航栏滚动效果
     const navbar = document.getElementById('navbar');
-    window.addEventListener('scroll', () => {
-        navbar.classList.toggle('py-2', window.scrollY > 50);
-        navbar.classList.toggle('py-4', window.scrollY <= 50);
-        navbar.classList.toggle('shadow-lg', window.scrollY > 50);
-    });
+    if (navbar) {
+        window.addEventListener('scroll', () => {
+            navbar.classList.toggle('py-2', window.scrollY > 50);
+            navbar.classList.toggle('py-4', window.scrollY <= 50);
+            navbar.classList.toggle('shadow-lg', window.scrollY > 50);
+        });
+    }
 
     // 平台与接口的映射关系
     const platformApiMap = {
@@ -1233,6 +1375,8 @@ function showResult(videoData) {
     if (musicContainer && musicContainer.innerHTML.trim()) {
         contentWrapper.appendChild(musicContainer);
     }
+
+    contentWrapper.appendChild(createRawDataContainer(videoData));
 }
 
 // 新增常见问题切换功能
